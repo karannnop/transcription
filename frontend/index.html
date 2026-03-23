@@ -1,0 +1,982 @@
+`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VoxScript — Audio Transcription & Translation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;1,300&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --bg2: #111118;
+      --bg3: #17171f;
+      --border: #2a2a38;
+      --border2: #3a3a50;
+      --accent: #6c63ff;
+      --accent2: #ff6b9d;
+      --accent3: #00e5cc;
+      --text: #e8e8f0;
+      --text2: #9090b0;
+      --text3: #5a5a78;
+      --success: #00e5a0;
+      --warn: #ffb74d;
+      --err: #ff5252;
+      --radius: 12px;
+      --radius-sm: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Noise texture overlay ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 0; opacity: 0.4;
+    }
+
+    /* ── Ambient glow ── */
+    .ambient {
+      position: fixed; pointer-events: none; z-index: 0;
+      border-radius: 50%; filter: blur(120px); opacity: 0.12;
+    }
+    .ambient-1 { width: 600px; height: 600px; top: -200px; left: -100px; background: var(--accent); }
+    .ambient-2 { width: 400px; height: 400px; bottom: -100px; right: -100px; background: var(--accent2); }
+    .ambient-3 { width: 300px; height: 300px; top: 40%; left: 50%; transform: translateX(-50%); background: var(--accent3); }
+
+    /* ── Layout ── */
+    .container { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Header ── */
+    header {
+      padding: 28px 0 20px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      display: flex; align-items: center; gap: 12px;
+      font-family: 'Syne', sans-serif; font-weight: 800; font-size: 22px;
+      letter-spacing: -0.5px;
+    }
+    .logo-icon {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .logo span { color: var(--accent2); }
+    .health-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      color: var(--text3);
+      background: var(--bg2); border: 1px solid var(--border);
+      padding: 5px 10px; border-radius: 100px;
+    }
+    .health-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); }
+    .health-dot.ok { background: var(--success); box-shadow: 0 0 8px var(--success); animation: pulse 2s infinite; }
+    .health-dot.err { background: var(--err); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+    /* ── Hero ── */
+    .hero { padding: 60px 0 40px; text-align: center; }
+    .hero-eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 0.15em;
+      color: var(--accent3); text-transform: uppercase;
+      background: rgba(0,229,204,0.07); border: 1px solid rgba(0,229,204,0.2);
+      padding: 5px 14px; border-radius: 100px; margin-bottom: 20px;
+    }
+    .hero h1 {
+      font-family: 'Syne', sans-serif; font-weight: 800;
+      font-size: clamp(36px, 5vw, 60px); line-height: 1.05;
+      letter-spacing: -2px; margin-bottom: 16px;
+    }
+    .hero h1 em {
+      font-style: normal;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 50%, var(--accent3) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .hero p { color: var(--text2); font-size: 17px; max-width: 520px; margin: 0 auto; line-height: 1.7; }
+
+    /* ── Features row ── */
+    .features {
+      display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+      margin: 28px 0 0;
+    }
+    .feature-pill {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12px; font-weight: 500;
+      color: var(--text2); background: var(--bg2);
+      border: 1px solid var(--border); border-radius: 100px;
+      padding: 6px 14px;
+    }
+    .feature-pill svg { flex-shrink: 0; }
+
+    /* ── Main grid ── */
+    .main-grid {
+      display: grid; grid-template-columns: 1fr 380px; gap: 24px;
+      padding: 40px 0 60px; align-items: start;
+    }
+    @media (max-width: 860px) { .main-grid { grid-template-columns: 1fr; } }
+
+    /* ── Card ── */
+    .card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .card-header {
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .card-header h2 {
+      font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700;
+      letter-spacing: 0.05em; text-transform: uppercase; color: var(--text);
+    }
+    .card-header .badge {
+      font-family: 'DM Mono', monospace; font-size: 10px;
+      background: var(--bg3); border: 1px solid var(--border2);
+      color: var(--text3); padding: 2px 8px; border-radius: 100px;
+    }
+    .card-body { padding: 20px; }
+
+    /* ── Drop zone ── */
+    #drop-zone {
+      border: 2px dashed var(--border2);
+      border-radius: var(--radius);
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+    #drop-zone:hover, #drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(108,99,255,0.05);
+    }
+    #drop-zone.has-file { border-style: solid; border-color: var(--accent3); }
+    #drop-zone input { display: none; }
+    .drop-icon {
+      width: 52px; height: 52px; margin: 0 auto 16px;
+      background: linear-gradient(135deg, rgba(108,99,255,0.2), rgba(255,107,157,0.2));
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+    }
+    .drop-title { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .drop-sub { font-size: 13px; color: var(--text3); }
+    .drop-formats {
+      font-family: 'DM Mono', monospace; font-size: 10px;
+      color: var(--accent); margin-top: 10px; letter-spacing: 0.05em;
+    }
+    .file-selected {
+      display: none; flex-direction: column; align-items: center; gap: 6px;
+    }
+    #drop-zone.has-file .file-selected { display: flex; }
+    #drop-zone.has-file .drop-default { display: none; }
+    .file-name { font-family: 'DM Mono', monospace; font-size: 13px; color: var(--text); word-break: break-all; }
+    .file-meta { font-size: 12px; color: var(--text3); }
+    .file-clear {
+      font-size: 11px; color: var(--err); cursor: pointer;
+      background: none; border: none; font-family: 'DM Sans', sans-serif;
+      text-decoration: underline; margin-top: 4px;
+    }
+    .file-clear:hover { opacity: 0.8; }
+
+    /* ── Form controls ── */
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+    .form-row-3 { grid-template-columns: 1fr 1fr 1fr; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    label {
+      font-size: 11px; font-weight: 500; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text3);
+      font-family: 'DM Mono', monospace;
+    }
+    select, input[type=text] {
+      background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); padding: 9px 12px; border-radius: var(--radius-sm);
+      font-family: 'DM Sans', sans-serif; font-size: 13px;
+      appearance: none; outline: none;
+      transition: border-color 0.2s;
+    }
+    select:focus, input[type=text]:focus { border-color: var(--accent); }
+    .select-wrap { position: relative; }
+    .select-wrap::after {
+      content: '▾'; position: absolute; right: 10px; top: 50%;
+      transform: translateY(-50%); color: var(--text3); pointer-events: none; font-size: 12px;
+    }
+
+    /* ── Task toggle ── */
+    .task-toggle {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 4px;
+    }
+    .task-btn {
+      padding: 8px; border-radius: 5px; border: none; cursor: pointer;
+      font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500;
+      color: var(--text2); background: transparent;
+      transition: all 0.15s;
+    }
+    .task-btn.active {
+      background: var(--accent); color: white;
+      box-shadow: 0 2px 12px rgba(108,99,255,0.3);
+    }
+
+    /* ── Submit button ── */
+    .btn-submit {
+      width: 100%; margin-top: 20px;
+      padding: 14px 24px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none; border-radius: var(--radius-sm);
+      color: white; font-family: 'Syne', sans-serif;
+      font-size: 15px; font-weight: 700; letter-spacing: 0.02em;
+      cursor: pointer; position: relative; overflow: hidden;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-submit:hover { opacity: 0.92; transform: translateY(-1px); }
+    .btn-submit:active { transform: translateY(0); }
+    .btn-submit:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-submit-inner { display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+    /* ── Info sidebar ── */
+    .info-list { display: flex; flex-direction: column; gap: 8px; }
+    .info-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 12px; border-radius: var(--radius-sm);
+      background: var(--bg3); border: 1px solid var(--border);
+    }
+    .info-icon {
+      width: 28px; height: 28px; flex-shrink: 0; border-radius: 7px;
+      display: flex; align-items: center; justify-content: center; font-size: 14px;
+    }
+    .info-text strong { display: block; font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+    .info-text span { font-size: 11px; color: var(--text3); line-height: 1.5; }
+
+    .tip-box {
+      margin-top: 16px; padding: 12px;
+      background: rgba(0,229,204,0.05); border: 1px solid rgba(0,229,204,0.15);
+      border-radius: var(--radius-sm); font-size: 12px; color: var(--text2); line-height: 1.6;
+    }
+    .tip-box strong { color: var(--accent3); }
+
+    /* ── Progress / Results ── */
+    #results-section { display: none; }
+
+    .progress-card { padding: 24px; }
+    .progress-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .progress-title { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; }
+    .status-badge {
+      font-family: 'DM Mono', monospace; font-size: 11px; padding: 4px 10px;
+      border-radius: 100px;
+    }
+    .status-badge.queued { background: rgba(144,144,176,0.15); color: var(--text2); }
+    .status-badge.transcribing { background: rgba(108,99,255,0.15); color: var(--accent); }
+    .status-badge.loading_model { background: rgba(255,183,77,0.15); color: var(--warn); }
+    .status-badge.extracting_audio { background: rgba(0,229,204,0.1); color: var(--accent3); }
+    .status-badge.processing { background: rgba(0,229,204,0.1); color: var(--accent3); }
+    .status-badge.completed { background: rgba(0,229,160,0.1); color: var(--success); }
+    .status-badge.error { background: rgba(255,82,82,0.1); color: var(--err); }
+
+    .progress-bar-wrap {
+      height: 4px; background: var(--bg3); border-radius: 100px; overflow: hidden; margin-bottom: 10px;
+    }
+    .progress-bar {
+      height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 100px; transition: width 0.4s ease;
+      box-shadow: 0 0 12px rgba(108,99,255,0.5);
+    }
+    .progress-message {
+      font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text3);
+    }
+
+    /* ── Transcript panel ── */
+    .transcript-panel { margin-top: 24px; }
+    .tab-nav {
+      display: flex; gap: 2px; margin-bottom: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      padding: 10px 16px; font-size: 12px; font-weight: 500;
+      font-family: 'DM Mono', monospace;
+      border: none; background: none; cursor: pointer;
+      color: var(--text3); border-bottom: 2px solid transparent;
+      transition: all 0.15s; margin-bottom: -1px;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:hover:not(.active) { color: var(--text2); }
+
+    .tab-content { display: none; padding: 16px 0 0; }
+    .tab-content.active { display: block; }
+
+    .transcript-text {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 16px;
+      font-size: 14px; line-height: 1.8; color: var(--text2);
+      max-height: 280px; overflow-y: auto;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .transcript-text::-webkit-scrollbar { width: 4px; }
+    .transcript-text::-webkit-scrollbar-track { background: var(--bg3); }
+    .transcript-text::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 100px; }
+
+    .segments-list {
+      max-height: 280px; overflow-y: auto;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+    }
+    .segment-item {
+      display: grid; grid-template-columns: 110px 1fr; gap: 12px;
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .segment-item:last-child { border-bottom: none; }
+    .seg-time { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--accent3); white-space: nowrap; }
+    .seg-text { color: var(--text2); line-height: 1.5; }
+
+    .words-list {
+      max-height: 280px; overflow-y: auto;
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    }
+    .word-chip {
+      display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 5px; padding: 4px 8px; cursor: default;
+      transition: border-color 0.1s;
+    }
+    .word-chip:hover { border-color: var(--accent); }
+    .word-chip .w { font-size: 13px; color: var(--text); }
+    .word-chip .t { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--accent3); }
+
+    /* ── Download section ── */
+    .download-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;
+      margin-top: 16px;
+    }
+    .dl-btn {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg3);
+      cursor: pointer; transition: all 0.15s;
+      font-size: 13px; font-weight: 500; color: var(--text2);
+      text-decoration: none;
+    }
+    .dl-btn:hover { border-color: var(--accent2); color: var(--accent2); background: rgba(255,107,157,0.05); }
+    .dl-btn svg { flex-shrink: 0; }
+    .dl-ext { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text3); margin-left: auto; }
+
+    /* ── Meta stats ── */
+    .meta-stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      gap: 8px; margin-top: 16px;
+    }
+    .stat-box {
+      padding: 10px 12px; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); text-align: center;
+    }
+    .stat-val { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; color: var(--text); }
+    .stat-label { font-size: 10px; color: var(--text3); margin-top: 2px; font-family: 'DM Mono', monospace; }
+
+    /* ── Error state ── */
+    .error-box {
+      background: rgba(255,82,82,0.06); border: 1px solid rgba(255,82,82,0.2);
+      border-radius: var(--radius-sm); padding: 14px 16px;
+      font-size: 13px; color: var(--err); font-family: 'DM Mono', monospace;
+      line-height: 1.6;
+    }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border); padding: 24px 0;
+      text-align: center; font-size: 12px; color: var(--text3);
+    }
+    footer span { color: var(--text3); }
+    footer a { color: var(--accent); text-decoration: none; }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: white; border-radius: 50%;
+      animation: spin 0.7s linear infinite; flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Waveform animation ── */
+    .waveform {
+      display: flex; align-items: center; gap: 3px; height: 24px;
+    }
+    .wave-bar {
+      width: 3px; border-radius: 100px;
+      background: linear-gradient(to top, var(--accent), var(--accent2));
+    }
+    .wave-bar:nth-child(1) { animation: wave 1.2s ease-in-out infinite; }
+    .wave-bar:nth-child(2) { animation: wave 1.2s ease-in-out 0.1s infinite; }
+    .wave-bar:nth-child(3) { animation: wave 1.2s ease-in-out 0.2s infinite; }
+    .wave-bar:nth-child(4) { animation: wave 1.2s ease-in-out 0.3s infinite; }
+    .wave-bar:nth-child(5) { animation: wave 1.2s ease-in-out 0.4s infinite; }
+    @keyframes wave {
+      0%, 100% { height: 6px; opacity: 0.4; }
+      50% { height: 22px; opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="ambient ambient-1"></div>
+<div class="ambient ambient-2"></div>
+<div class="ambient ambient-3"></div>
+
+<div class="container">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🎙</div>
+      Vox<span>Script</span>
+    </div>
+    <div class="health-badge">
+      <div class="health-dot" id="health-dot"></div>
+      <span id="health-text">checking...</span>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-eyebrow">⚡ Powered by OpenAI Whisper</div>
+    <h1>Transcribe. Translate.<br><em>Timestamp Everything.</em></h1>
+    <p>Word-level subtitle generation for any audio or video file. 50+ languages, multiple models, export to SRT/VTT/JSON.</p>
+    <div class="features">
+      <div class="feature-pill">
+        <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        Word-Level Timestamps
+      </div>
+      <div class="feature-pill">
+        <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        50+ Languages
+      </div>
+      <div class="feature-pill">
+        <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        SRT / VTT / JSON / TXT
+      </div>
+      <div class="feature-pill">
+        <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Large File Support
+      </div>
+    </div>
+  </div>
+
+  <!-- Main grid -->
+  <div class="main-grid">
+
+    <!-- Left: upload form -->
+    <div>
+      <!-- Upload card -->
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header">
+          <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <h2>Upload File</h2>
+          <span class="badge">Audio &amp; Video</span>
+        </div>
+        <div class="card-body">
+          <!-- Drop zone -->
+          <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+            <input type="file" id="file-input" accept="audio/*,video/*,.mkv,.avi,.mov,.wmv,.webm,.mp4,.mp3,.wav,.m4a,.ogg,.flac,.aac,.opus,.wma" />
+            <div class="drop-default">
+              <div class="drop-icon">🎵</div>
+              <div class="drop-title">Drop your file here</div>
+              <div class="drop-sub">or click to browse</div>
+              <div class="drop-formats">MP3 · MP4 · WAV · M4A · MKV · AVI · MOV · FLAC · OGG · WEBM</div>
+            </div>
+            <div class="file-selected">
+              <div style="font-size: 28px;">✅</div>
+              <div class="file-name" id="file-name-display">filename.mp3</div>
+              <div class="file-meta" id="file-meta-display">0 MB</div>
+              <button class="file-clear" onclick="clearFile(event)">× Remove file</button>
+            </div>
+          </div>
+
+          <!-- Task selection -->
+          <div class="form-group" style="margin-top: 16px;">
+            <label>Task</label>
+            <div class="task-toggle">
+              <button class="task-btn active" id="task-transcribe" onclick="setTask('transcribe')">
+                🎯 Transcribe
+              </button>
+              <button class="task-btn" id="task-translate" onclick="setTask('translate')">
+                🌐 Translate to English
+              </button>
+            </div>
+          </div>
+
+          <!-- Language & model row -->
+          <div class="form-row">
+            <div class="form-group">
+              <label>Source Language</label>
+              <div class="select-wrap">
+                <select id="source-lang">
+                  <option value="auto">🔍 Auto Detect</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Whisper Model</label>
+              <div class="select-wrap">
+                <select id="model-size">
+                  <option value="tiny">Tiny (Fastest)</option>
+                  <option value="base" selected>Base (Balanced)</option>
+                  <option value="small">Small (Better)</option>
+                  <option value="medium">Medium (High Accuracy)</option>
+                  <option value="large-v3">Large v3 (Best)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn-submit" id="submit-btn" onclick="submitJob()" disabled>
+            <div class="btn-submit-inner">
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Start Processing
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Results section -->
+      <div id="results-section">
+        <div class="card">
+          <div class="card-header">
+            <div class="waveform" id="waveform-anim">
+              <div class="wave-bar"></div><div class="wave-bar"></div>
+              <div class="wave-bar"></div><div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+            </div>
+            <h2 id="results-card-title">Processing</h2>
+          </div>
+          <div class="progress-card">
+            <!-- Progress -->
+            <div id="progress-section">
+              <div class="progress-header">
+                <span class="progress-title" id="progress-filename">—</span>
+                <span class="status-badge queued" id="status-badge">queued</span>
+              </div>
+              <div class="progress-bar-wrap">
+                <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+              </div>
+              <div class="progress-message" id="progress-message">Waiting...</div>
+            </div>
+
+            <!-- Error -->
+            <div class="error-box" id="error-box" style="display:none;"></div>
+
+            <!-- Stats -->
+            <div class="meta-stats" id="meta-stats" style="display:none;"></div>
+
+            <!-- Transcript tabs -->
+            <div class="transcript-panel" id="transcript-panel" style="display:none;">
+              <div class="tab-nav">
+                <button class="tab-btn active" onclick="switchTab('full')">Full Text</button>
+                <button class="tab-btn" onclick="switchTab('segments')">Segments</button>
+                <button class="tab-btn" onclick="switchTab('words')">Words</button>
+              </div>
+              <div class="tab-content active" id="tab-full">
+                <div class="transcript-text" id="full-text"></div>
+              </div>
+              <div class="tab-content" id="tab-segments">
+                <div class="segments-list" id="segments-list"></div>
+              </div>
+              <div class="tab-content" id="tab-words">
+                <div class="words-list" id="words-list"></div>
+              </div>
+            </div>
+
+            <!-- Downloads -->
+            <div id="download-section" style="display:none;">
+              <div style="font-family:'DM Mono',monospace; font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:0.08em; margin-top:20px; margin-bottom:8px;">
+                Download Outputs
+              </div>
+              <div class="download-grid" id="download-grid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: info panel -->
+    <div>
+      <div class="card" style="margin-bottom: 16px;">
+        <div class="card-header">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <h2>About Models</h2>
+        </div>
+        <div class="card-body">
+          <div class="info-list">
+            <div class="info-item">
+              <div class="info-icon" style="background:rgba(0,229,204,0.1);">⚡</div>
+              <div class="info-text">
+                <strong>Tiny / Base</strong>
+                <span>Best for quick checks. Fast but lower accuracy on accents or noisy audio.</span>
+              </div>
+            </div>
+            <div class="info-item">
+              <div class="info-icon" style="background:rgba(108,99,255,0.1);">🎯</div>
+              <div class="info-text">
+                <strong>Small / Medium</strong>
+                <span>Great balance. Handles most accents and background noise well.</span>
+              </div>
+            </div>
+            <div class="info-item">
+              <div class="info-icon" style="background:rgba(255,107,157,0.1);">🏆</div>
+              <div class="info-text">
+                <strong>Large v3</strong>
+                <span>Best accuracy. Requires ~10GB VRAM. Ideal for professional use.</span>
+              </div>
+            </div>
+          </div>
+          <div class="tip-box">
+            <strong>💡 Tip:</strong> Use <em>Translate</em> task to convert any language directly to English subtitles. For original language subtitles, use <em>Transcribe</em> with the correct source language.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <h2>Output Formats</h2>
+        </div>
+        <div class="card-body">
+          <div class="info-list">
+            <div class="info-item">
+              <div class="info-icon" style="background:rgba(255,183,77,0.1);">📄</div>
+              <div class="info-text">
+                <strong>SRT (Standard)</strong>
+                <span>Works with VLC, YouTube, most video players.</span>
+              </div>
+            </div>
+            <div class="info-item">
+              <div class="info-icon" style="background:rgba(0,229,204,0.1);">🌐</div>
+              <div class="info-text">
+                <strong>VTT (Web)</strong>
+                <span>For HTML5 video, Vimeo, web players.</span>
+              </div>
+            </div>
+            <div class="info-item">
+              <div class="info-icon" style="background:rgba(108,99,255,0.1);">⏱</div>
+              <div class="info-text">
+                <strong>Word SRT</strong>
+                <span>Word-level granularity subtitles for karaoke-style sync.</span>
+              </div>
+            </div>
+            <div class="info-item">
+              <div class="info-icon" style="background:rgba(255,107,157,0.1);">📊</div>
+              <div class="info-text">
+                <strong>JSON</strong>
+                <span>Full structured data: segments, words, timestamps, confidence.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    <span>VoxScript — Local Whisper transcription. Your audio never leaves your server.</span>
+    &nbsp;·&nbsp; <a href="https://github.com/openai/whisper" target="_blank">Powered by OpenAI Whisper</a>
+  </footer>
+</div>
+
+<script>
+const API = 'http://localhost:8000';
+let currentJobId = null;
+let pollInterval = null;
+let selectedFile = null;
+let currentTask = 'transcribe';
+
+// ── Health check ──
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/api/health`);
+    const d = await r.json();
+    const dot = document.getElementById('health-dot');
+    const txt = document.getElementById('health-text');
+    if (d.whisper_available && d.ffmpeg_available) {
+      dot.className = 'health-dot ok';
+      txt.textContent = 'Whisper ready';
+    } else if (!d.whisper_available) {
+      dot.className = 'health-dot err';
+      txt.textContent = 'Whisper not installed';
+    } else {
+      dot.className = 'health-dot err';
+      txt.textContent = 'FFmpeg missing';
+    }
+  } catch {
+    document.getElementById('health-dot').className = 'health-dot err';
+    document.getElementById('health-text').textContent = 'Backend offline';
+  }
+}
+
+// ── Load languages ──
+async function loadLanguages() {
+  try {
+    const r = await fetch(`${API}/api/languages`);
+    const d = await r.json();
+    const sel = document.getElementById('source-lang');
+    for (const [code, name] of Object.entries(d.languages)) {
+      if (code === 'auto') continue;
+      const opt = document.createElement('option');
+      opt.value = code; opt.textContent = name;
+      sel.appendChild(opt);
+    }
+  } catch {}
+}
+
+// ── File input ──
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) selectFile(e.target.files[0]);
+});
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
+});
+
+function selectFile(file) {
+  selectedFile = file;
+  document.getElementById('file-name-display').textContent = file.name;
+  const mb = (file.size / 1024 / 1024).toFixed(1);
+  document.getElementById('file-meta-display').textContent = `${mb} MB`;
+  dropZone.classList.add('has-file');
+  document.getElementById('submit-btn').disabled = false;
+}
+
+function clearFile(e) {
+  e.stopPropagation();
+  selectedFile = null;
+  fileInput.value = '';
+  dropZone.classList.remove('has-file');
+  document.getElementById('submit-btn').disabled = true;
+}
+
+// ── Task toggle ──
+function setTask(t) {
+  currentTask = t;
+  document.getElementById('task-transcribe').classList.toggle('active', t === 'transcribe');
+  document.getElementById('task-translate').classList.toggle('active', t === 'translate');
+}
+
+// ── Tab switching ──
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    const tabs = ['full', 'segments', 'words'];
+    b.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ── Submit ──
+async function submitJob() {
+  if (!selectedFile) return;
+
+  const submitBtn = document.getElementById('submit-btn');
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<div class="btn-submit-inner"><div class="spinner"></div> Uploading...</div>';
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  formData.append('source_language', document.getElementById('source-lang').value);
+  formData.append('target_language', 'en');
+  formData.append('task', currentTask);
+  formData.append('model_size', document.getElementById('model-size').value);
+
+  try {
+    const r = await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
+    if (!r.ok) {
+      const err = await r.json();
+      throw new Error(err.detail || 'Upload failed');
+    }
+    const d = await r.json();
+    currentJobId = d.job_id;
+    showResultsSection();
+    startPolling();
+  } catch (err) {
+    alert('Error: ' + err.message);
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<div class="btn-submit-inner"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Processing</div>';
+  }
+}
+
+// ── Results UI ──
+function showResultsSection() {
+  const s = document.getElementById('results-section');
+  s.style.display = 'block';
+  s.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(pollJob, 2000);
+  pollJob();
+}
+
+async function pollJob() {
+  if (!currentJobId) return;
+  try {
+    const r = await fetch(`${API}/api/job/${currentJobId}`);
+    if (!r.ok) return;
+    const job = await r.json();
+    updateUI(job);
+    if (job.status === 'completed' || job.status === 'error') {
+      clearInterval(pollInterval);
+      pollInterval = null;
+      resetSubmitBtn();
+    }
+  } catch {}
+}
+
+function resetSubmitBtn() {
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = !selectedFile;
+  btn.innerHTML = '<div class="btn-submit-inner"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Processing</div>';
+}
+
+function updateUI(job) {
+  // Title
+  document.getElementById('results-card-title').textContent =
+    job.status === 'completed' ? 'Results' : 'Processing...';
+
+  // Progress
+  document.getElementById('progress-filename').textContent = job.filename || '—';
+  document.getElementById('progress-bar').style.width = (job.progress || 0) + '%';
+  document.getElementById('progress-message').textContent = job.message || '';
+
+  // Status badge
+  const badge = document.getElementById('status-badge');
+  badge.className = 'status-badge ' + job.status;
+  badge.textContent = job.status.replace('_', ' ');
+
+  // Waveform animation
+  const wave = document.getElementById('waveform-anim');
+  const active = ['transcribing', 'processing', 'loading_model', 'extracting_audio'].includes(job.status);
+  wave.style.display = active ? 'flex' : 'none';
+
+  // Error
+  const errBox = document.getElementById('error-box');
+  if (job.status === 'error') {
+    errBox.style.display = 'block';
+    errBox.textContent = '⚠ ' + job.message;
+  } else {
+    errBox.style.display = 'none';
+  }
+
+  // Completed results
+  if (job.status === 'completed' && job.result) {
+    const res = job.result;
+
+    // Stats
+    const stats = document.getElementById('meta-stats');
+    stats.style.display = 'grid';
+    const dur = res.duration ? formatDuration(res.duration) : '—';
+    const wordCount = res.words ? res.words.length : 0;
+    const segCount = res.segments ? res.segments.length : 0;
+    stats.innerHTML = `
+      <div class="stat-box"><div class="stat-val">${dur}</div><div class="stat-label">Duration</div></div>
+      <div class="stat-box"><div class="stat-val">${segCount}</div><div class="stat-label">Segments</div></div>
+      <div class="stat-box"><div class="stat-val">${wordCount}</div><div class="stat-label">Words</div></div>
+      <div class="stat-box"><div class="stat-val">${(res.detected_language || '—').toUpperCase()}</div><div class="stat-label">Language</div></div>
+    `;
+
+    // Full text
+    document.getElementById('full-text').textContent = res.full_text || '(no text)';
+    document.getElementById('transcript-panel').style.display = 'block';
+
+    // Segments
+    const segList = document.getElementById('segments-list');
+    segList.innerHTML = '';
+    (res.segments || []).forEach(seg => {
+      const div = document.createElement('div');
+      div.className = 'segment-item';
+      div.innerHTML = `
+        <div class="seg-time">${fmtTime(seg.start)} → ${fmtTime(seg.end)}</div>
+        <div class="seg-text">${escHtml(seg.text.trim())}</div>
+      `;
+      segList.appendChild(div);
+    });
+
+    // Words
+    const wordsList = document.getElementById('words-list');
+    wordsList.innerHTML = '';
+    (res.words || []).slice(0, 500).forEach(w => {
+      const chip = document.createElement('div');
+      chip.className = 'word-chip';
+      chip.title = `${fmtTime(w.start)} → ${fmtTime(w.end)}`;
+      chip.innerHTML = `<span class="w">${escHtml(w.word.trim())}</span><span class="t">${fmtTime(w.start)}</span>`;
+      wordsList.appendChild(chip);
+    });
+    if ((res.words || []).length > 500) {
+      const more = document.createElement('div');
+      more.style.cssText = 'color:var(--text3);font-size:11px;font-family:"DM Mono",monospace;padding:4px 8px;';
+      more.textContent = `+${res.words.length - 500} more words`;
+      wordsList.appendChild(more);
+    }
+
+    // Downloads
+    document.getElementById('download-section').style.display = 'block';
+    const grid = document.getElementById('download-grid');
+    const downloads = [
+      { fmt: 'srt', label: 'SRT Subtitles', ext: 'SRT', icon: '📄' },
+      { fmt: 'vtt', label: 'WebVTT', ext: 'VTT', icon: '🌐' },
+      { fmt: 'word_srt', label: 'Word SRT', ext: 'SRT', icon: '⏱' },
+      { fmt: 'json', label: 'Full JSON', ext: 'JSON', icon: '📊' },
+      { fmt: 'txt', label: 'Plain Text', ext: 'TXT', icon: '📝' },
+    ];
+    grid.innerHTML = downloads.map(d => `
+      <a class="dl-btn" href="${API}/api/job/${job.job_id}/download/${d.fmt}" download>
+        <span>${d.icon}</span> ${d.label} <span class="dl-ext">${d.ext}</span>
+      </a>
+    `).join('');
+  }
+}
+
+// ── Utils ──
+function fmtTime(s) {
+  if (s === undefined || s === null) return '—';
+  const m = Math.floor(s / 60);
+  const sec = (s % 60).toFixed(1).padStart(4, '0');
+  return `${m}:${sec.padStart(4,'0')}`;
+}
+function formatDuration(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor(s % 3600 / 60);
+  const sec = Math.floor(s % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Init ──
+checkHealth();
+loadLanguages();
+</script>
+</body>
+</html>
