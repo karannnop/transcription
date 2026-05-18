@@ -209,10 +209,17 @@
       transition: border-color 0.2s;
     }
     select:focus, input[type=text]:focus { border-color: var(--accent); }
+    select:disabled { opacity: 0.65; cursor: not-allowed; }
     .select-wrap { position: relative; }
     .select-wrap::after {
       content: '▾'; position: absolute; right: 10px; top: 50%;
       transform: translateY(-50%); color: var(--text3); pointer-events: none; font-size: 12px;
+    }
+    .form-hint {
+      font-size: 11px; color: var(--text3); line-height: 1.5;
+    }
+    @media (max-width: 640px) {
+      .form-row, .form-row-3 { grid-template-columns: 1fr; }
     }
 
     /* ── Task toggle ── */
@@ -287,6 +294,7 @@
     .status-badge.loading_model { background: rgba(255,183,77,0.15); color: var(--warn); }
     .status-badge.extracting_audio { background: rgba(0,229,204,0.1); color: var(--accent3); }
     .status-badge.processing { background: rgba(0,229,204,0.1); color: var(--accent3); }
+    .status-badge.translating { background: rgba(255,107,157,0.12); color: var(--accent2); }
     .status-badge.completed { background: rgba(0,229,160,0.1); color: var(--success); }
     .status-badge.error { background: rgba(255,82,82,0.1); color: var(--err); }
 
@@ -386,7 +394,7 @@
       padding: 10px 12px; background: var(--bg3); border: 1px solid var(--border);
       border-radius: var(--radius-sm); text-align: center;
     }
-    .stat-val { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; color: var(--text); }
+    .stat-val { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; color: var(--text); line-height: 1.2; overflow-wrap: anywhere; }
     .stat-label { font-size: 10px; color: var(--text3); margin-top: 2px; font-family: 'DM Mono', monospace; }
 
     /* ── Error state ── */
@@ -515,13 +523,13 @@
                 🎯 Transcribe
               </button>
               <button class="task-btn" id="task-translate" onclick="setTask('translate')">
-                🌐 Translate to English
+                🌐 Translate
               </button>
             </div>
           </div>
 
           <!-- Language & model row -->
-          <div class="form-row">
+          <div class="form-row form-row-3">
             <div class="form-group">
               <label>Source Language</label>
               <div class="select-wrap">
@@ -529,6 +537,15 @@
                   <option value="auto">🔍 Auto Detect</option>
                 </select>
               </div>
+            </div>
+            <div class="form-group" id="target-lang-group">
+              <label>Output Language</label>
+              <div class="select-wrap">
+                <select id="target-lang" disabled>
+                  <option value="same">Same as audio</option>
+                </select>
+              </div>
+              <div class="form-hint" id="target-lang-hint">Transcribe keeps the audio in its detected language.</div>
             </div>
             <div class="form-group">
               <label>Whisper Model</label>
@@ -547,7 +564,7 @@
           <button class="btn-submit" id="submit-btn" onclick="submitJob()" disabled>
             <div class="btn-submit-inner">
               <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              Start Processing
+              Start Transcription
             </div>
           </button>
         </div>
@@ -645,7 +662,7 @@
             </div>
           </div>
           <div class="tip-box">
-            <strong>💡 Tip:</strong> Use <em>Translate</em> task to convert any language directly to English subtitles. For original language subtitles, use <em>Transcribe</em> with the correct source language.
+            <strong>💡 Tip:</strong> Use <em>Transcribe</em> for same-language text. Use <em>Translate</em> and choose an output language for subtitles in English, Hindi, German, Japanese, French, and more.
           </div>
         </div>
       </div>
@@ -704,6 +721,63 @@ let currentJobId = null;
 let pollInterval = null;
 let selectedFile = null;
 let currentTask = 'transcribe';
+let languageNames = {};
+
+const FALLBACK_LANGUAGES = {
+  auto: 'Auto Detect',
+  en: 'English',
+  hi: 'Hindi',
+  de: 'German',
+  ja: 'Japanese',
+  fr: 'French',
+  es: 'Spanish',
+  it: 'Italian',
+  pt: 'Portuguese',
+  ru: 'Russian',
+  ko: 'Korean',
+  zh: 'Chinese',
+  ar: 'Arabic',
+  bn: 'Bengali',
+  ta: 'Tamil',
+  te: 'Telugu',
+  mr: 'Marathi',
+  ur: 'Urdu',
+  pa: 'Punjabi',
+  gu: 'Gujarati',
+  kn: 'Kannada',
+  ml: 'Malayalam',
+  th: 'Thai',
+  vi: 'Vietnamese',
+  tr: 'Turkish',
+  pl: 'Polish',
+  nl: 'Dutch',
+  sv: 'Swedish',
+  da: 'Danish',
+  no: 'Norwegian',
+  fi: 'Finnish',
+  cs: 'Czech',
+  sk: 'Slovak',
+  ro: 'Romanian',
+  hu: 'Hungarian',
+  uk: 'Ukrainian',
+  id: 'Indonesian',
+  ms: 'Malay',
+  fa: 'Persian',
+  he: 'Hebrew',
+  sw: 'Swahili',
+  af: 'Afrikaans',
+  bg: 'Bulgarian',
+  ca: 'Catalan',
+  el: 'Greek',
+  et: 'Estonian',
+  hr: 'Croatian',
+  lt: 'Lithuanian',
+  lv: 'Latvian',
+  ne: 'Nepali',
+  sl: 'Slovenian',
+  sr: 'Serbian',
+  tl: 'Tagalog',
+};
 
 // ── Health check ──
 async function checkHealth() {
@@ -730,22 +804,53 @@ async function checkHealth() {
 
 // ── Load languages ──
 async function loadLanguages() {
+  let languages = FALLBACK_LANGUAGES;
+  let targetLanguages = null;
+
   try {
     const r = await fetch(`${API}/api/languages`);
     const d = await r.json();
-    const sel = document.getElementById('source-lang');
-    for (const [code, name] of Object.entries(d.languages)) {
-      if (code === 'auto') continue;
-      const opt = document.createElement('option');
-      opt.value = code; opt.textContent = name;
-      sel.appendChild(opt);
-    }
+    languages = d.languages || languages;
+    targetLanguages = d.target_languages || null;
   } catch {}
+
+  populateLanguageSelects(languages, targetLanguages);
+  updateTaskUI();
+}
+
+function populateLanguageSelects(languages, targetLanguages) {
+  languageNames = { ...languages, ...(targetLanguages || {}) };
+
+  const sourceSel = document.getElementById('source-lang');
+  const targetSel = document.getElementById('target-lang');
+  sourceSel.innerHTML = '<option value="auto">🔍 Auto Detect</option>';
+  targetSel.innerHTML = '<option value="same">Same as audio</option>';
+
+  for (const [code, name] of Object.entries(languages)) {
+    if (code === 'auto') continue;
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = name;
+    sourceSel.appendChild(opt);
+  }
+
+  for (const [code, name] of Object.entries(targetLanguages || languages)) {
+    if (code === 'auto') continue;
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = name;
+    targetSel.appendChild(opt);
+  }
+
+  targetSel.value = targetSel.querySelector('option[value="en"]') ? 'en' : 'same';
 }
 
 // ── File input ──
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
+const targetLangSelect = document.getElementById('target-lang');
+
+targetLangSelect.addEventListener('change', updateTargetHint);
 
 fileInput.addEventListener('change', e => {
   if (e.target.files[0]) selectFile(e.target.files[0]);
@@ -779,6 +884,61 @@ function setTask(t) {
   currentTask = t;
   document.getElementById('task-transcribe').classList.toggle('active', t === 'transcribe');
   document.getElementById('task-translate').classList.toggle('active', t === 'translate');
+  updateTaskUI();
+  if (!pollInterval) resetSubmitBtn();
+}
+
+function updateTaskUI() {
+  const targetSel = document.getElementById('target-lang');
+  if (!targetSel) return;
+
+  if (currentTask === 'translate') {
+    targetSel.disabled = false;
+    if (!targetSel.value || targetSel.value === 'same') {
+      targetSel.value = targetSel.querySelector('option[value="en"]')
+        ? 'en'
+        : (targetSel.options[1]?.value || 'same');
+    }
+  } else {
+    targetSel.value = 'same';
+    targetSel.disabled = true;
+  }
+
+  updateTargetHint();
+}
+
+function updateTargetHint() {
+  const hint = document.getElementById('target-lang-hint');
+  const targetSel = document.getElementById('target-lang');
+  if (!hint || !targetSel) return;
+
+  if (currentTask === 'transcribe') {
+    hint.textContent = 'Transcribe keeps the audio in its detected/source language.';
+    return;
+  }
+
+  const target = targetSel.value;
+  if (target === 'en') {
+    hint.textContent = 'Whisper translates audio directly to English.';
+  } else {
+    hint.textContent = `Server translates transcript and subtitles to ${languageLabel(target)}.`;
+  }
+}
+
+function selectedTargetLanguage() {
+  return currentTask === 'translate'
+    ? document.getElementById('target-lang').value
+    : 'same';
+}
+
+function languageLabel(code) {
+  if (!code || code === 'same') return 'Same as audio';
+  return languageNames[code] || code.toUpperCase();
+}
+
+function submitButtonHtml() {
+  const label = currentTask === 'translate' ? 'Start Translation' : 'Start Transcription';
+  return `<div class="btn-submit-inner"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> ${label}</div>`;
 }
 
 // ── Tab switching ──
@@ -802,7 +962,7 @@ async function submitJob() {
   const formData = new FormData();
   formData.append('file', selectedFile);
   formData.append('source_language', document.getElementById('source-lang').value);
-  formData.append('target_language', 'en');
+  formData.append('target_language', selectedTargetLanguage());
   formData.append('task', currentTask);
   formData.append('model_size', document.getElementById('model-size').value);
 
@@ -819,7 +979,7 @@ async function submitJob() {
   } catch (err) {
     alert('Error: ' + err.message);
     submitBtn.disabled = false;
-    submitBtn.innerHTML = '<div class="btn-submit-inner"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Processing</div>';
+    submitBtn.innerHTML = submitButtonHtml();
   }
 }
 
@@ -854,7 +1014,7 @@ async function pollJob() {
 function resetSubmitBtn() {
   const btn = document.getElementById('submit-btn');
   btn.disabled = !selectedFile;
-  btn.innerHTML = '<div class="btn-submit-inner"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Processing</div>';
+  btn.innerHTML = submitButtonHtml();
 }
 
 function updateUI(job) {
@@ -874,7 +1034,7 @@ function updateUI(job) {
 
   // Waveform animation
   const wave = document.getElementById('waveform-anim');
-  const active = ['transcribing', 'processing', 'loading_model', 'extracting_audio'].includes(job.status);
+  const active = ['transcribing', 'translating', 'processing', 'loading_model', 'extracting_audio'].includes(job.status);
   wave.style.display = active ? 'flex' : 'none';
 
   // Error
@@ -896,11 +1056,14 @@ function updateUI(job) {
     const dur = res.duration ? formatDuration(res.duration) : '—';
     const wordCount = res.words ? res.words.length : 0;
     const segCount = res.segments ? res.segments.length : 0;
+    const sourceLanguage = languageLabel(res.detected_language || res.source_language || job.source_language);
+    const outputLanguage = languageLabel(res.output_language || res.target_language || job.target_language || res.detected_language);
     stats.innerHTML = `
       <div class="stat-box"><div class="stat-val">${dur}</div><div class="stat-label">Duration</div></div>
       <div class="stat-box"><div class="stat-val">${segCount}</div><div class="stat-label">Segments</div></div>
       <div class="stat-box"><div class="stat-val">${wordCount}</div><div class="stat-label">Words</div></div>
-      <div class="stat-box"><div class="stat-val">${(res.detected_language || '—').toUpperCase()}</div><div class="stat-label">Language</div></div>
+      <div class="stat-box"><div class="stat-val">${escHtml(sourceLanguage)}</div><div class="stat-label">Source</div></div>
+      <div class="stat-box"><div class="stat-val">${escHtml(outputLanguage)}</div><div class="stat-label">Output</div></div>
     `;
 
     // Full text
