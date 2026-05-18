@@ -32,18 +32,18 @@ OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Supported languages
+# Whisper-supported transcription languages. "auto" is source-only.
 LANGUAGES = {
     "auto": "Auto Detect",
     "en": "English",
     "hi": "Hindi",
-    "es": "Spanish",
-    "fr": "French",
     "de": "German",
+    "ja": "Japanese",
+    "fr": "French",
+    "es": "Spanish",
     "it": "Italian",
     "pt": "Portuguese",
     "ru": "Russian",
-    "ja": "Japanese",
     "ko": "Korean",
     "zh": "Chinese",
     "ar": "Arabic",
@@ -75,6 +75,74 @@ LANGUAGES = {
     "fa": "Persian",
     "he": "Hebrew",
     "sw": "Swahili",
+    "af": "Afrikaans",
+    "am": "Amharic",
+    "as": "Assamese",
+    "az": "Azerbaijani",
+    "ba": "Bashkir",
+    "be": "Belarusian",
+    "bg": "Bulgarian",
+    "bo": "Tibetan",
+    "br": "Breton",
+    "bs": "Bosnian",
+    "ca": "Catalan",
+    "cy": "Welsh",
+    "el": "Greek",
+    "et": "Estonian",
+    "eu": "Basque",
+    "fo": "Faroese",
+    "gl": "Galician",
+    "ha": "Hausa",
+    "haw": "Hawaiian",
+    "hr": "Croatian",
+    "ht": "Haitian Creole",
+    "hy": "Armenian",
+    "is": "Icelandic",
+    "jw": "Javanese",
+    "ka": "Georgian",
+    "kk": "Kazakh",
+    "km": "Khmer",
+    "la": "Latin",
+    "lb": "Luxembourgish",
+    "ln": "Lingala",
+    "lo": "Lao",
+    "lt": "Lithuanian",
+    "lv": "Latvian",
+    "mg": "Malagasy",
+    "mi": "Maori",
+    "mk": "Macedonian",
+    "mn": "Mongolian",
+    "mt": "Maltese",
+    "my": "Myanmar",
+    "ne": "Nepali",
+    "nn": "Nynorsk",
+    "oc": "Occitan",
+    "ps": "Pashto",
+    "sa": "Sanskrit",
+    "sd": "Sindhi",
+    "si": "Sinhala",
+    "sl": "Slovenian",
+    "sn": "Shona",
+    "so": "Somali",
+    "sq": "Albanian",
+    "sr": "Serbian",
+    "su": "Sundanese",
+    "tg": "Tajik",
+    "tk": "Turkmen",
+    "tl": "Tagalog",
+    "tt": "Tatar",
+    "uz": "Uzbek",
+    "yi": "Yiddish",
+    "yo": "Yoruba",
+    "yue": "Cantonese",
+}
+
+TARGET_LANGUAGES = {code: name for code, name in LANGUAGES.items() if code != "auto"}
+
+TRANSLATOR_LANGUAGE_ALIASES = {
+    "zh": "zh-CN",
+    "he": "iw",
+    "yue": "zh-TW",
 }
 
 def update_job(job_id: str, **kwargs):
@@ -180,6 +248,40 @@ def word_timestamps_to_srt(words: list) -> str:
 
     return "\n".join(lines)
 
+def translator_language_code(language_code: str) -> str:
+    """Map Whisper language codes to codes accepted by the translator."""
+    return TRANSLATOR_LANGUAGE_ALIASES.get(language_code, language_code)
+
+def translate_text_batch(texts: List[str], source_lang: str, target_lang: str) -> List[str]:
+    """Translate a list of transcript strings while preserving item order."""
+    if not texts:
+        return []
+
+    if target_lang in ("same", "auto") or source_lang == target_lang:
+        return texts
+
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError as exc:
+        raise RuntimeError(
+            "Multi-language translation requires deep-translator. "
+            "Run: pip install -r backend/requirements.txt"
+        ) from exc
+
+    source = "auto" if source_lang in ("auto", None) else translator_language_code(source_lang)
+    target = translator_language_code(target_lang)
+    translator = GoogleTranslator(source=source, target=target)
+
+    translated: List[str] = []
+    for text in texts:
+        clean_text = (text or "").strip()
+        if not clean_text:
+            translated.append(text)
+            continue
+        translated.append(translator.translate(clean_text))
+
+    return translated
+
 async def run_transcription(
     job_id: str,
     audio_path: Path,
@@ -205,12 +307,16 @@ async def run_transcription(
 
         model = whisper.load_model(model_size)
 
+        output_lang = target_lang if task == "translate" else "same"
+        whisper_task = "translate" if task == "translate" and target_lang == "en" else "transcribe"
+        action_label = "translation" if task == "translate" else "transcription"
+
         update_job(job_id, status="transcribing", progress=30,
-                   message="Starting transcription...")
+                   message=f"Starting {action_label}...")
 
         # Build whisper options
         decode_options = {
-            "task": task,
+            "task": whisper_task,
             "word_timestamps": True,
             "verbose": False,
             "fp16": False,
@@ -219,8 +325,12 @@ async def run_transcription(
         if source_lang != "auto":
             decode_options["language"] = source_lang
 
-        update_job(job_id, status="transcribing", progress=40,
-                   message="Transcribing audio (this may take a while for large files)...")
+        if whisper_task == "translate":
+            progress_message = "Translating audio to English (this may take a while for large files)..."
+        else:
+            progress_message = "Transcribing audio (this may take a while for large files)..."
+
+        update_job(job_id, status="transcribing", progress=40, message=progress_message)
 
         # Run transcription
         result = model.transcribe(str(audio_path), **decode_options)
@@ -231,6 +341,7 @@ async def run_transcription(
         # Extract segments and words
         segments = []
         all_words = []
+        detected_language = result.get("language", source_lang)
 
         for seg in result.get("segments", []):
             segments.append({
@@ -247,6 +358,36 @@ async def run_transcription(
                     "end": word["end"],
                     "probability": word.get("probability", 1.0)
                 })
+
+        translation_provider = "whisper" if whisper_task == "translate" else None
+
+        needs_external_translation = (
+            task == "translate"
+            and target_lang not in ("same", "auto", "en", detected_language)
+        )
+
+        if needs_external_translation:
+            target_name = TARGET_LANGUAGES.get(target_lang, target_lang)
+            update_job(job_id, status="translating", progress=85,
+                       message=f"Translating transcript to {target_name}...")
+            translated_texts = translate_text_batch(
+                [seg["text"] for seg in segments],
+                detected_language,
+                target_lang,
+            )
+            for segment, translated_text in zip(segments, translated_texts):
+                segment["text"] = translated_text
+
+            result["text"] = " ".join(text.strip() for text in translated_texts).strip()
+            all_words = []
+            output_lang = target_lang
+            translation_provider = "deep-translator"
+        elif task == "translate" and target_lang == "en":
+            output_lang = "en"
+        elif task == "translate":
+            output_lang = target_lang
+        else:
+            output_lang = detected_language
 
         # Generate subtitle files
         srt_content = segments_to_srt(segments)
@@ -265,7 +406,11 @@ async def run_transcription(
 
         full_result = {
             "job_id": job_id,
-            "detected_language": result.get("language", source_lang),
+            "detected_language": detected_language,
+            "source_language": source_lang,
+            "target_language": target_lang,
+            "output_language": output_lang,
+            "translation_provider": translation_provider,
             "task": task,
             "full_text": result.get("text", "").strip(),
             "segments": segments,
@@ -278,7 +423,7 @@ async def run_transcription(
             job_id,
             status="completed",
             progress=100,
-            message="Transcription complete!",
+            message="Translation complete!" if task == "translate" else "Transcription complete!",
             result=full_result,
             files={
                 "srt": str(srt_path),
@@ -301,7 +446,10 @@ async def run_transcription(
 
 @app.get("/api/languages")
 async def get_languages():
-    return {"languages": LANGUAGES}
+    return {
+        "languages": LANGUAGES,
+        "target_languages": TARGET_LANGUAGES,
+    }
 
 @app.get("/api/models")
 async def get_models():
@@ -337,6 +485,16 @@ async def upload_file(
     # Validate task
     if task not in ("transcribe", "translate"):
         raise HTTPException(400, "Task must be 'transcribe' or 'translate'")
+
+    if source_language not in LANGUAGES:
+        raise HTTPException(400, f"Unsupported source language: {source_language}")
+
+    if task == "transcribe":
+        target_language = "same"
+    elif target_language in ("same", "auto", ""):
+        target_language = "en"
+    elif target_language not in TARGET_LANGUAGES:
+        raise HTTPException(400, f"Unsupported target language: {target_language}")
 
     # Save uploaded file
     job_id = str(uuid.uuid4())

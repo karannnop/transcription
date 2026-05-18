@@ -7,7 +7,7 @@ A full-stack web application for transcribing and translating large audio/video 
 ## ✨ Features
 
 - 🎯 **Transcription** — Transcribe audio in 50+ languages
-- 🌐 **Translation** — Translate any language to English
+- 🌐 **Translation** — Translate transcripts to English, Hindi, German, Japanese, French, and more
 - ⏱ **Word-level timestamps** — Karaoke-style subtitle precision
 - 📄 **Multiple export formats** — SRT, VTT, Word SRT, JSON, TXT
 - 🎬 **Large file support** — Audio & video (MP4, MKV, AVI, MOV, etc.)
@@ -98,6 +98,8 @@ audiotranscribe/
 
 - **Large files**: Use `small` or `medium` model for a good speed/accuracy balance
 - **Hindi/Indic languages**: Set source language explicitly for better accuracy
+- **Same-language text**: Use `transcribe` with `auto` or the exact source language
+- **Non-English translation**: Uses `deep-translator` after Whisper creates the transcript
 - **Noisy audio**: Use `medium` or `large-v3` model
 - **Quick drafts**: Use `tiny` or `base` for fast processing
 - **Production**: Use Docker Compose with proper volume mounts for Whisper model cache
@@ -128,4 +130,4 @@ audiotranscribe/
 
 ## 🔒 Privacy
 
-Your audio files are processed locally on your server. No data is sent to any external service.
+Your audio files are processed locally on your server. English translation uses Whisper locally. Non-English translation uses `deep-translator`, so transcript text may be sent to the translation provider configured by that package.
